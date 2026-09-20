@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>3Dジャンプランナー</title>
+
+<!-- iPhoneのホーム画面に追加した際のアイコン・見た目の設定 -->
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon-180.png">
+<link rel="apple-touch-icon" sizes="167x167" href="apple-touch-icon-167.png">
+<link rel="apple-touch-icon" sizes="152x152" href="apple-touch-icon-152.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ジャンプランナー">
+<meta name="theme-color" content="#1d2b4f">
+<link rel="manifest" href="manifest.json">
+<style>
+  :root{
+    --shu:#c23b22;
+    --kon:#1d2b4f;
+    --bg1:#0b1330;
+    --bg2:#1d2b4f;
+    --text:#f5f0e6;
+  }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%;
+    background:linear-gradient(#152238,#c97b52);
+    overflow:hidden;
+    font-family:"Hiragino Sans","Meiryo",sans-serif;
+    -webkit-user-select:none; user-select:none;
+    touch-action:none;
+  }
+  #canvas-wrap{ position:fixed; inset:0; }
+  canvas{ display:block; width:100%; height:100%; }
+
+  #hud{
+    position:fixed; top:0; left:0; right:0;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding:16px 20px; box-sizing:border-box;
+    color:var(--text); pointer-events:none;
+    text-shadow:0 2px 6px rgba(0,0,0,.45);
+  }
+  #score{ font-size:28px; font-weight:700; letter-spacing:1px; }
+  #best{ font-size:14px; opacity:.85; margin-top:2px; }
+
+  #hint{
+    position:fixed; bottom:22px; left:0; right:0;
+    text-align:center; color:var(--text);
+    font-size:14px; opacity:.85; pointer-events:none;
+    text-shadow:0 2px 6px rgba(0,0,0,.45);
+  }
+
+  #overlay{
+    position:fixed; inset:0;
+    background:rgba(10,15,35,.72);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    color:var(--text); text-align:center; padding:24px; box-sizing:border-box;
+    backdrop-filter:blur(2px);
+  }
+  #overlay.hidden{ display:none; }
+  #overlay h1{
+    font-size:clamp(24px,7vw,40px); margin:0 0 8px; color:var(--shu);
+    text-shadow:0 3px 10px rgba(0,0,0,.5);
+  }
+  #overlay p{ margin:4px 0 20px; font-size:15px; opacity:.9; line-height:1.7; }
+  #finalScore{ font-size:20px; margin-bottom:22px; }
+  #finalScore b{ color:#ffd76a; font-size:26px; }
+
+  button{
+    font-family:inherit; font-size:18px; font-weight:700;
+    padding:14px 40px; border-radius:30px; border:none;
+    background:var(--shu); color:#fff; cursor:pointer;
+    box-shadow:0 6px 18px rgba(194,59,34,.5);
+    -webkit-tap-highlight-color:transparent;
+  }
+  button:active{ transform:scale(0.96); }
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap"></div>
+
+<div id="hud">
+  <div>
+    <div id="score">0 m</div>
+    <div id="best">ベスト: 0 m</div>
+  </div>
+</div>
+
+<div id="hint">タップ/スペース: ジャンプ　←→キー・左右スワイプ: レーン移動</div>
+
+<div id="overlay">
+  <h1>3Dジャンプランナー</h1>
+  <p>ジャンプで障害物を飛び越え、左右のレーン移動もうまく使って<br>できるだけ長く走り続けよう!</p>
+  <button id="startBtn">スタート</button>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+(function(){
+  "use strict";
+
+  // ---------- 基本セットアップ ----------
+  const wrap = document.getElementById('canvas-wrap');
+  const scene = new THREE.Scene();
+
+  // 浮世絵の"ぼかし"(グラデーション)をイメージした夕暮れの空
+  function createEdoSkyTexture(){
+    const canvas = document.createElement('canvas');
+    canvas.width = 2; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.0, '#152238');   // 上空:藍色
+    grad.addColorStop(0.5, '#3d4f7a');
+    grad.addColorStop(0.8, '#c97b52');   // 地平線付近:夕焼け
+    grad.addColorStop(1.0, '#e8a765');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 2, 512);
+    return new THREE.CanvasTexture(canvas);
+  }
+  scene.background = createEdoSkyTexture();
+  scene.fog = new THREE.Fog(0x8a6a58, 20, 75);
+
+  const camera = new THREE.PerspectiveCamera(66, window.innerWidth/window.innerHeight, 0.1, 200);
+  camera.position.set(0, 6.3, 10);
+  camera.lookAt(0, 1, -5);
+
+  const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:false });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  wrap.appendChild(renderer.domElement);
+
+  // ---------- ライト(夕暮れの暖色系) ----------
+  const hemi = new THREE.HemisphereLight(0xffd9a0, 0x3b2b20, 0.95);
+  scene.add(hemi);
+  const sun = new THREE.DirectionalLight(0xffb066, 1.05);
+  sun.position.set(5, 12, 6);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024,1024);
+  sun.shadow.camera.left = -12; sun.shadow.camera.right = 12;
+  sun.shadow.camera.top = 12; sun.shadow.camera.bottom = -12;
+  scene.add(sun);
+
+  // ---------- 色 ----------
+  const COLOR_SHU = 0xc23b22;
+  const COLOR_KON = 0x1d2b4f;
+  const COLOR_GROUND = 0x8a7358;   // 町の地面(踏み固めた土の色)
+  const COLOR_LANE = 0x7a6a52;     // 街道(土の道)
+  const COLOR_WOOD_A = 0x4a3728;   // 町家の木材(濃いめ)
+  const COLOR_WOOD_B = 0x5c4433;   // 町家の木材(やや明るめ)
+  const COLOR_ROOF = 0x2b2b2b;     // 瓦屋根
+  const COLOR_LANTERN = 0xc23b22;  // 提灯(赤)
+
+  // ---------- 地面(3レーン) ----------
+  const LANE_WIDTH = 3;           // 1レーンの幅
+  const LANE_COUNT = 3;           // レーン数
+  const lanePositions = [-LANE_WIDTH, 0, LANE_WIDTH]; // 各レーンのx座標(左・中央・右)
+  const TOTAL_WIDTH = LANE_WIDTH * LANE_COUNT;
+
+  const groundGeo = new THREE.PlaneGeometry(TOTAL_WIDTH, 400);
+  const groundMat = new THREE.MeshStandardMaterial({ color: COLOR_LANE });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI/2;
+  ground.position.z = -180;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // 左右の地面(装飾)
+  [-1,1].forEach(function(side){
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(30, 400), new THREE.MeshStandardMaterial({color:COLOR_GROUND}));
+    g.rotation.x = -Math.PI/2;
+    g.position.set(side*(TOTAL_WIDTH/2 + 15), -0.01, -180);
+    g.receiveShadow = true;
+    scene.add(g);
+  });
+
+  // レーンの区切り線(左右2本、土の道に合わせて白土色に)
+  [-LANE_WIDTH/2, LANE_WIDTH/2].forEach(function(x){
+    const div = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.06, 400),
+      new THREE.MeshStandardMaterial({color:0xd9cbb0, transparent:true, opacity:0.45})
+    );
+    div.rotation.x = -Math.PI/2;
+    div.position.set(x, 0.005, -180);
+    scene.add(div);
+  });
+
+  // 中央レーンの目印ライン(流れる感を出す、敷石風)
+  const lineMarks = [];
+  for(let i=0;i<20;i++){
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.15, 1.2),
+      new THREE.MeshStandardMaterial({color:0xd9cbb0})
+    );
+    m.rotation.x = -Math.PI/2;
+    m.position.set(0, 0.01, -i*8);
+    scene.add(m);
+    lineMarks.push(m);
+  }
+
+  // ---------- 江戸の街並み(町家) ----------
+  function createMachiya(){
+    const group = new THREE.Group();
+    const w = 3.5 + Math.random()*1.5;
+    const h = 4 + Math.random()*3;
+    const d = 3.2;
+
+    // 建物本体(木造)
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: Math.random() < 0.5 ? COLOR_WOOD_A : COLOR_WOOD_B,
+      roughness: 0.9
+    });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+    body.position.y = h/2;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+
+    // 瓦屋根(切妻風、軒が出た板)
+    const roofMat = new THREE.MeshStandardMaterial({ color: COLOR_ROOF, roughness: 0.8 });
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w*1.3, 0.4, d*1.35), roofMat);
+    roof.position.y = h + 0.2;
+    roof.castShadow = true;
+    group.add(roof);
+    // 屋根の棟(頂部の飾り)
+    const ridge = new THREE.Mesh(new THREE.BoxGeometry(w*1.32, 0.18, 0.3), roofMat);
+    ridge.position.y = h + 0.5;
+    group.add(ridge);
+
+    // 提灯(軒先に吊るす赤い灯り)
+    if (Math.random() < 0.6) {
+      const lantern = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.18, 0.18, 0.42, 8),
+        new THREE.MeshStandardMaterial({ color: COLOR_LANTERN, emissive: 0x551100, emissiveIntensity: 0.5 })
+      );
+      lantern.position.set(w*0.28, h*0.72, d/2 + 0.15);
+      group.add(lantern);
+    }
+
+    return group;
+  }
+
+  // 街道の両脇に町家を並べる(スクロールに合わせて手前へ流し、奥で再利用する)
+  const buildings = [];
+  const BUILDING_SPACING = 9;
+  const BUILDING_ROWS = 14;
+  for (let i=0; i<BUILDING_ROWS; i++){
+    [-1, 1].forEach(function(side){
+      const b = createMachiya();
+      const xOff = TOTAL_WIDTH/2 + 3 + Math.random()*1.5;
+      b.position.set(side*xOff, 0, -i*BUILDING_SPACING - 10);
+      scene.add(b);
+      buildings.push(b);
+    });
+  }
+
+  // ---------- プレイヤー ----------
+  // player: レーン移動・ジャンプで動かす親グループ(位置の基準はここ)
+  // fallbackModel: 標準のカプセル+頭キャラ(GLB未使用時、または読み込み失敗時に表示)
+  // customModel: Tripo3D等で作ったGLBモデルが読み込めたらここに入る
+  const player = new THREE.Group();
+  const fallbackModel = new THREE.Group();
+  const bodyMat = new THREE.MeshStandardMaterial({ color: COLOR_SHU, roughness:0.5 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.4, 0.6, 4, 8), bodyMat);
+  body.castShadow = true;
+  body.position.y = 0.6;
+  fallbackModel.add(body);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 16), new THREE.MeshStandardMaterial({color:0xffe0bd}));
+  head.position.y = 1.3;
+  head.castShadow = true;
+  fallbackModel.add(head);
+  player.add(fallbackModel);
+  scene.add(player);
+
+  // ---------- GLBキャラクターモデルの読み込み ----------
+  // Tripo3Dなどで生成したGLBファイルをこのHTMLと同じフォルダに置き、
+  // 下のPLAYER_MODEL_URLにファイル名を指定すると自動で読み込んで差し替える。
+  // 見つからない/読み込み失敗の場合は、そのまま今のカプセルキャラで遊べる(フォールバック)。
+  const PLAYER_MODEL_URL = 'player-character.glb'; // ← Tripo3Dで作ったGLBのファイル名に変更
+  const PLAYER_MODEL_SCALE = 1.0;    // モデルの大きさ調整(必要に応じて変更)
+  const PLAYER_MODEL_Y_OFFSET = 0;   // モデルの足元の高さ調整(地面に埋まる/浮く場合に調整)
+
+  let customModel = null;
+
+  if (typeof GLTFLoader === 'function' && PLAYER_MODEL_URL) {
+    const loader = new GLTFLoader();
+    loader.load(
+      PLAYER_MODEL_URL,
+      function onLoad(gltf){
+        customModel = gltf.scene;
+        customModel.scale.setScalar(PLAYER_MODEL_SCALE);
+        customModel.position.y = PLAYER_MODEL_Y_OFFSET;
+        customModel.traverse(function(node){
+          if (node.isMesh) {
+            node.castShadow = true;
+            node.receiveShadow = true;
+          }
+        });
+        player.remove(fallbackModel);
+        player.add(customModel);
+        console.log('カスタムキャラクターモデルを読み込みました:', PLAYER_MODEL_URL);
+      },
+      undefined,
+      function onError(err){
+        // ファイルが無い/壊れている場合はここに来る → フォールバックのまま続行
+        console.log('カスタムモデルが見つからないため、標準キャラクターで続行します。('+PLAYER_MODEL_URL+')');
+      }
+    );
+  }
+
+  const GROUND_Y = 0;
+  let velY = 0;
+  let isJumping = false;
+  const GRAVITY = -0.028;
+  const JUMP_VEL = 0.46;
+
+  let currentLane = 1; // 0:左, 1:中央, 2:右
+  const LANE_MOVE_SPEED = 0.22; // レーン間を移動する速さ(補間)
+
+  player.position.set(lanePositions[currentLane], GROUND_Y, 0);
+
+  function changeLane(dir){
+    if(!running) return;
+    const next = currentLane + dir;
+    if(next < 0 || next > LANE_COUNT-1) return;
+    currentLane = next;
+  }
+
+  // ---------- 障害物(木の樽) ----------
+  const obstacles = [];
+  const OBST_COLOR = 0x8a5a2b;      // 樽の木材色
+  const OBST_BAND_COLOR = 0x3d2b1a; // 樽のたが(帯)の色
+  function spawnObstacle(){
+    const height = 0.9; // ジャンプで越えられる高さ
+    const radius = LANE_WIDTH*0.22;
+    const group = new THREE.Group();
+
+    const barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius*1.05, height, 14),
+      new THREE.MeshStandardMaterial({ color: OBST_COLOR, roughness:0.85 })
+    );
+    barrel.castShadow = true;
+    group.add(barrel);
+
+    // 上下の"たが"(帯)
+    [height*0.32, -height*0.32].forEach(function(y){
+      const band = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius*1.06, radius*1.11, height*0.12, 14),
+        new THREE.MeshStandardMaterial({ color: OBST_BAND_COLOR, roughness:0.7 })
+      );
+      band.position.y = y;
+      group.add(band);
+    });
+
+    const lane = Math.floor(Math.random() * LANE_COUNT);
+    group.position.set(lanePositions[lane], height/2, -60 - Math.random()*10);
+    group.userData.lane = lane;
+    scene.add(group);
+    obstacles.push(group);
+  }
+
+  // ---------- 状態管理 ----------
+  let running = false;
+  let speed = 0.28;
+  const SPEED_INC = 0.0006;
+  let distance = 0;
+  let best = 0;
+  try { best = parseFloat(localStorage.getItem('jumpRunnerBest') || '0'); } catch(e){}
+  document.getElementById('best').textContent = 'ベスト: ' + Math.floor(best) + ' m';
+
+  let spawnTimer = 0;
+  let spawnInterval = 70;
+
+  const scoreEl = document.getElementById('score');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+
+  function resetGame(){
+    obstacles.forEach(function(o){ scene.remove(o); });
+    obstacles.length = 0;
+    distance = 0;
+    speed = 0.28;
+    spawnTimer = 0;
+    spawnInterval = 70;
+    currentLane = 1;
+    player.position.set(lanePositions[currentLane], GROUND_Y, 0);
+    velY = 0;
+    isJumping = false;
+    scoreEl.textContent = '0 m';
+  }
+
+  function jump(){
+    if(!running) return;
+    if(!isJumping){
+      velY = JUMP_VEL;
+      isJumping = true;
+    }
+  }
+
+  function endGame(){
+    running = false;
+    if(distance > best){
+      best = distance;
+      try { localStorage.setItem('jumpRunnerBest', String(best)); } catch(e){}
+    }
+    document.getElementById('finalScoreVal') // placeholder guard (unused)
+    document.getElementById('best').textContent = 'ベスト: ' + Math.floor(best) + ' m';
+    overlay.innerHTML =
+      '<h1>ゲームオーバー</h1>'+
+      '<div id="finalScore">走った距離: <b>' + Math.floor(distance) + ' m</b></div>'+
+      '<button id="restartBtn">もう一度</button>';
+    overlay.classList.remove('hidden');
+    document.getElementById('restartBtn').addEventListener('click', startGame);
+  }
+
+  function startGame(){
+    resetGame();
+    overlay.classList.add('hidden');
+    running = true;
+  }
+
+  startBtn.addEventListener('click', startGame);
+
+  // ---------- 入力 ----------
+  window.addEventListener('keydown', function(e){
+    if(e.code === 'Space' || e.code === 'ArrowUp'){
+      e.preventDefault();
+      jump();
+    } else if(e.code === 'ArrowLeft'){
+      e.preventDefault();
+      changeLane(-1);
+    } else if(e.code === 'ArrowRight'){
+      e.preventDefault();
+      changeLane(1);
+    }
+  });
+
+  // タップ=ジャンプ、左右スワイプ=レーン移動 を判定する
+  let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+  const SWIPE_THRESHOLD = 40; // px
+
+  window.addEventListener('pointerdown', function(e){
+    touchStartX = e.clientX;
+    touchStartY = e.clientY;
+    touchStartTime = Date.now();
+  });
+
+  window.addEventListener('pointerup', function(e){
+    const dx = e.clientX - touchStartX;
+    const dy = e.clientY - touchStartY;
+    const absDx = Math.abs(dx), absDy = Math.abs(dy);
+
+    if(absDx > SWIPE_THRESHOLD && absDx > absDy){
+      // 横スワイプ → レーン移動
+      changeLane(dx > 0 ? 1 : -1);
+    } else {
+      // それ以外(タップ・軽いブレ)→ジャンプ
+      jump();
+    }
+  });
+
+  // ---------- リサイズ ----------
+  window.addEventListener('resize', function(){
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  // ---------- 衝突判定(簡易AABB) ----------
+  function checkCollision(obst){
+    const px = player.position.x, pz = player.position.z, py = player.position.y;
+    const dx = Math.abs(px - obst.position.x);
+    const dz = Math.abs(pz - obst.position.z);
+    const obstTop = obst.position.y + 0.45; // 障害物の上端
+    const playerBottom = py; // プレイヤーの脚元
+    const overlapXZ = dx < (LANE_WIDTH*0.35 + 0.35) && dz < (0.35 + 0.5);
+    const notCleared = playerBottom < obstTop - 0.05;
+    return overlapXZ && notCleared;
+  }
+
+  // ---------- メインループ ----------
+  function animate(){
+    requestAnimationFrame(animate);
+
+    if(running){
+      // 前進
+      distance += speed * 0.6;
+      speed += SPEED_INC;
+      scoreEl.textContent = Math.floor(distance) + ' m';
+
+      // ジャンプ物理
+      velY += GRAVITY;
+      player.position.y += velY;
+      if(player.position.y <= GROUND_Y){
+        player.position.y = GROUND_Y;
+        velY = 0;
+        isJumping = false;
+      }
+
+      // レーン移動(目標xへ滑らかに補間)
+      const targetX = lanePositions[currentLane];
+      player.position.x += (targetX - player.position.x) * LANE_MOVE_SPEED;
+      // 移動方向に少し傾ける(演出)。カスタムモデルにも効くようplayer自体を傾ける
+      player.rotation.z = (targetX - player.position.x) * -0.15;
+
+      // レーンライン流し
+      lineMarks.forEach(function(m){
+        m.position.z += speed;
+        if(m.position.z > 6){ m.position.z -= 20*8; }
+      });
+
+      // 街並み(町家)を手前へ流し、通り過ぎたら奥へ戻して再利用
+      buildings.forEach(function(b){
+        b.position.z += speed;
+        if(b.position.z > 10){
+          b.position.z -= BUILDING_ROWS * BUILDING_SPACING;
+        }
+      });
+
+      // 障害物出現
+      spawnTimer++;
+      if(spawnTimer > spawnInterval){
+        spawnTimer = 0;
+        spawnInterval = Math.max(38, 70 - distance*0.05);
+        spawnObstacle();
+      }
+
+      // 障害物移動・当たり判定・除去
+      for(let i=obstacles.length-1; i>=0; i--){
+        const o = obstacles[i];
+        o.position.z += speed;
+        if(checkCollision(o)){
+          endGame();
+        }
+        if(o.position.z > 8){
+          scene.remove(o);
+          obstacles.splice(i,1);
+        }
+      }
+
+      // わずかな上下バウンス(走ってる感)。カスタムモデルにも効くようplayer自体を揺らす
+      player.rotation.x = Math.sin(distance*0.9) * 0.05;
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  animate();
+})();
+</script>
+</body>
+</html>
