@@ -253,9 +253,11 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   }
 
   // 街道の両脇に町家を並べる(スクロールに合わせて手前へ流し、奥で再利用する)
+  // まずは標準の箱型モデルで配置しておき、Tripo3D等のGLBモデルが見つかれば後から差し替える。
   const buildings = [];
   const BUILDING_SPACING = 9;
   const BUILDING_ROWS = 14;
+  const buildingSides = []; // 各建物がどちら側(-1:左 / 1:右)にあるか記録(向き調整用)
   for (let i=0; i<BUILDING_ROWS; i++){
     [-1, 1].forEach(function(side){
       const b = createMachiya();
@@ -263,8 +265,59 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
       b.position.set(side*xOff, 0, -i*BUILDING_SPACING - 10);
       scene.add(b);
       buildings.push(b);
+      buildingSides.push(side);
     });
   }
+
+  // ---------- Tripo3D等で作った街並み用GLBモデルの読み込み(任意) ----------
+  // このHTMLと同じフォルダに指定名のGLBファイルを置くと、上の標準モデルと自動的に差し替わる。
+  // 見つからない場合はそのまま標準の町家・樽で遊べる(フォールバック)。
+  const SCENERY_MODEL_URLS = {
+    building: 'scenery-building.glb',  // 街道沿いに並べる建物モデル
+    obstacle: 'scenery-obstacle.glb'   // ジャンプで避ける障害物モデル
+  };
+  const BUILDING_MODEL_SCALE = 5.5;  // 建物モデルの大きさ調整(このモデルは高さ1.0基準で作られているため5.5倍している)
+  const OBSTACLE_MODEL_SCALE = 1.0;  // 障害物モデルの大きさ調整
+
+  let obstacleTemplate = null; // 読み込めた場合、以後の障害物生成で使う雛形
+
+  function loadSceneryModel(url, onSuccess){
+    if (typeof GLTFLoader !== 'function' || !url) return;
+    const loader = new GLTFLoader();
+    loader.load(
+      url,
+      function onLoad(gltf){
+        onSuccess(gltf.scene);
+        console.log('街並み用モデルを読み込みました:', url);
+      },
+      undefined,
+      function onError(){
+        console.log('街並み用モデルが見つからないため、標準の見た目で続行します。(' + url + ')');
+      }
+    );
+  }
+
+  // 建物モデルの差し替え
+  loadSceneryModel(SCENERY_MODEL_URLS.building, function(template){
+    buildings.forEach(function(oldGroup, idx){
+      const clone = template.clone(true);
+      clone.traverse(function(node){
+        if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+      });
+      clone.scale.setScalar(BUILDING_MODEL_SCALE);
+      clone.position.copy(oldGroup.position);
+      // 道に面するように、左側の建物は反転させる
+      clone.rotation.y = buildingSides[idx] < 0 ? Math.PI : 0;
+      scene.remove(oldGroup);
+      scene.add(clone);
+      buildings[idx] = clone;
+    });
+  });
+
+  // 障害物モデルの読み込み(以後spawnObstacleで使用)
+  loadSceneryModel(SCENERY_MODEL_URLS.obstacle, function(template){
+    obstacleTemplate = template;
+  });
 
   // ---------- プレイヤー ----------
   // player: レーン移動・ジャンプで動かす親グループ(位置の基準はここ)
@@ -344,28 +397,42 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   const OBST_BAND_COLOR = 0x3d2b1a; // 樽のたが(帯)の色
   function spawnObstacle(){
     const height = 0.9; // ジャンプで越えられる高さ
-    const radius = LANE_WIDTH*0.22;
-    const group = new THREE.Group();
-
-    const barrel = new THREE.Mesh(
-      new THREE.CylinderGeometry(radius, radius*1.05, height, 14),
-      new THREE.MeshStandardMaterial({ color: OBST_COLOR, roughness:0.85 })
-    );
-    barrel.castShadow = true;
-    group.add(barrel);
-
-    // 上下の"たが"(帯)
-    [height*0.32, -height*0.32].forEach(function(y){
-      const band = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius*1.06, radius*1.11, height*0.12, 14),
-        new THREE.MeshStandardMaterial({ color: OBST_BAND_COLOR, roughness:0.7 })
-      );
-      band.position.y = y;
-      group.add(band);
-    });
-
     const lane = Math.floor(Math.random() * LANE_COUNT);
-    group.position.set(lanePositions[lane], height/2, -60 - Math.random()*10);
+    let group;
+
+    if (obstacleTemplate) {
+      // Tripo3D等で作ったGLBモデルが読み込まれていれば、それを複製して使う
+      group = obstacleTemplate.clone(true);
+      group.traverse(function(node){
+        if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+      });
+      group.scale.setScalar(OBSTACLE_MODEL_SCALE);
+      group.position.set(lanePositions[lane], 0, -60 - Math.random()*10);
+    } else {
+      // 標準の見た目(木の樽)
+      const radius = LANE_WIDTH*0.22;
+      group = new THREE.Group();
+
+      const barrel = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius, radius*1.05, height, 14),
+        new THREE.MeshStandardMaterial({ color: OBST_COLOR, roughness:0.85 })
+      );
+      barrel.castShadow = true;
+      group.add(barrel);
+
+      // 上下の"たが"(帯)
+      [height*0.32, -height*0.32].forEach(function(y){
+        const band = new THREE.Mesh(
+          new THREE.CylinderGeometry(radius*1.06, radius*1.11, height*0.12, 14),
+          new THREE.MeshStandardMaterial({ color: OBST_BAND_COLOR, roughness:0.7 })
+        );
+        band.position.y = y;
+        group.add(band);
+      });
+
+      group.position.set(lanePositions[lane], height/2, -60 - Math.random()*10);
+    }
+
     group.userData.lane = lane;
     scene.add(group);
     obstacles.push(group);
