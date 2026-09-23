@@ -25,7 +25,7 @@
   }
   html,body{
     margin:0; padding:0; width:100%; height:100%;
-    background:linear-gradient(#152238,#c97b52);
+    background:linear-gradient(#05010f,#3a0a5c 60%,#ff2fa0);
     overflow:hidden;
     font-family:"Hiragino Sans","Meiryo",sans-serif;
     -webkit-user-select:none; user-select:none;
@@ -75,6 +75,16 @@
     -webkit-tap-highlight-color:transparent;
   }
   button:active{ transform:scale(0.96); }
+
+  #stageMsg{
+    position:fixed; top:38%; left:0; right:0;
+    text-align:center; pointer-events:none;
+    font-size:clamp(20px,6vw,34px); font-weight:700;
+    color:#fff; letter-spacing:2px;
+    text-shadow:0 0 12px rgba(0,229,255,.9), 0 0 24px rgba(255,47,160,.7);
+    opacity:0; transition:opacity .6s ease;
+  }
+  #stageMsg.show{ opacity:1; }
 </style>
 </head>
 <body>
@@ -89,10 +99,11 @@
 </div>
 
 <div id="hint">タップ/スペース: ジャンプ　←→キー・左右スワイプ: レーン移動</div>
+<div id="stageMsg"></div>
 
 <div id="overlay">
   <h1>3Dジャンプランナー</h1>
-  <p>ジャンプで障害物を飛び越え、左右のレーン移動もうまく使って<br>できるだけ長く走り続けよう!</p>
+  <p>ジャンプで障害物を飛び越え、左右のレーン移動もうまく使って<br>できるだけ長く走り続けよう!<br><span style="opacity:.75;font-size:13px;">※800m地点でネオン都市の夜景に切り替わります</span></p>
   <button id="startBtn">スタート</button>
 </div>
 
@@ -115,7 +126,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   const wrap = document.getElementById('canvas-wrap');
   const scene = new THREE.Scene();
 
-  // 浮世絵の"ぼかし"(グラデーション)をイメージした夕暮れの空
+  // ステージ1:江戸の街並み(夕暮れの空、浮世絵風グラデーション)
   function createEdoSkyTexture(){
     const canvas = document.createElement('canvas');
     canvas.width = 2; canvas.height = 512;
@@ -129,7 +140,32 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     ctx.fillRect(0, 0, 2, 512);
     return new THREE.CanvasTexture(canvas);
   }
-  scene.background = createEdoSkyTexture();
+
+  // ステージ2:ネオン都市の夜空(紫〜マゼンタのグラデーション+簡易スターフィールド)
+  function createNeonSkyTexture(){
+    const canvas = document.createElement('canvas');
+    canvas.width = 2; canvas.height = 512;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 0, 512);
+    grad.addColorStop(0.0, '#05010f');   // 上空:ほぼ黒
+    grad.addColorStop(0.45, '#170a3a');  // 深い紫
+    grad.addColorStop(0.75, '#6a1f8f');  // ネオンパープル
+    grad.addColorStop(1.0, '#ff2fa0');   // 地平線:マゼンタの発光
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 2, 512);
+    // 星(上空側にだけ、ランダムな光点)
+    for(let i=0;i<40;i++){
+      const y = Math.random()*230;
+      const alpha = 0.3 + Math.random()*0.5;
+      ctx.fillStyle = 'rgba(200,230,255,' + alpha.toFixed(2) + ')';
+      ctx.fillRect(Math.random()<0.5?0:1, y, 1, 1);
+    }
+    return new THREE.CanvasTexture(canvas);
+  }
+
+  const edoSkyTexture = createEdoSkyTexture();
+  const neonSkyTexture = createNeonSkyTexture();
+  scene.background = edoSkyTexture;
   scene.fog = new THREE.Fog(0x8a6a58, 20, 75);
 
   const camera = new THREE.PerspectiveCamera(66, window.innerWidth/window.innerHeight, 0.1, 200);
@@ -142,7 +178,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   renderer.shadowMap.enabled = true;
   wrap.appendChild(renderer.domElement);
 
-  // ---------- ライト(夕暮れの暖色系) ----------
+  // ---------- ライト(ステージごとに色・強さを切り替える) ----------
   const hemi = new THREE.HemisphereLight(0xffd9a0, 0x3b2b20, 0.95);
   scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xffb066, 1.05);
@@ -152,16 +188,33 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   sun.shadow.camera.left = -12; sun.shadow.camera.right = 12;
   sun.shadow.camera.top = 12; sun.shadow.camera.bottom = -12;
   scene.add(sun);
+  // 街を下から照らすネオンの反射光(マゼンタ、ステージ2でのみ点灯)
+  const neonFill = new THREE.PointLight(0xff2fa0, 0, 60);
+  neonFill.position.set(0, 4, -5);
+  scene.add(neonFill);
 
-  // ---------- 色 ----------
+  // ---------- 色(ステージ1:江戸 / ステージ2:ネオン都市) ----------
   const COLOR_SHU = 0xc23b22;
   const COLOR_KON = 0x1d2b4f;
-  const COLOR_GROUND = 0x8a7358;   // 町の地面(踏み固めた土の色)
-  const COLOR_LANE = 0x7a6a52;     // 街道(土の道)
-  const COLOR_WOOD_A = 0x4a3728;   // 町家の木材(濃いめ)
-  const COLOR_WOOD_B = 0x5c4433;   // 町家の木材(やや明るめ)
-  const COLOR_ROOF = 0x2b2b2b;     // 瓦屋根
-  const COLOR_LANTERN = 0xc23b22;  // 提灯(赤)
+  // 江戸(木造の町並み)
+  const EDO_COLOR_GROUND = 0x8a7358;   // 町の地面(踏み固めた土の色)
+  const EDO_COLOR_LANE = 0x7a6a52;     // 街道(土の道)
+  const EDO_COLOR_WOOD_A = 0x4a3728;   // 町家の木材(濃いめ)
+  const EDO_COLOR_WOOD_B = 0x5c4433;   // 町家の木材(やや明るめ)
+  const EDO_COLOR_ROOF = 0x2b2b2b;     // 瓦屋根
+  const EDO_COLOR_LANTERN = 0xc23b22;  // 提灯(赤)
+  // ネオン都市(高層ビル)
+  const NEON_COLOR_GROUND = 0x0c0818;  // 街の地面(アスファルトの黒)
+  const NEON_COLOR_LANE = 0x120a20;    // 走路(夜のアスファルト)
+  const NEON_COLOR_WOOD_A = 0x161028;  // ビル本体(濃いめ)
+  const NEON_COLOR_WOOD_B = 0x1e1638;  // ビル本体(やや明るめ)
+  const NEON_COLOR_ROOF = 0x0a0614;    // ビル屋上
+  const NEON_ACCENTS = [0x00e5ff, 0xff2fa0, 0xb14aff, 0x39ff8f]; // シアン/マゼンタ/紫/グリーンのネオン差し色
+
+  // 現在ステージで使う色(switchStageで書き換える)
+  let COLOR_WOOD_A = EDO_COLOR_WOOD_A;
+  let COLOR_WOOD_B = EDO_COLOR_WOOD_B;
+  let COLOR_ROOF = EDO_COLOR_ROOF;
 
   // ---------- 地面(3レーン) ----------
   const LANE_WIDTH = 3;           // 1レーンの幅
@@ -170,48 +223,64 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   const TOTAL_WIDTH = LANE_WIDTH * LANE_COUNT;
 
   const groundGeo = new THREE.PlaneGeometry(TOTAL_WIDTH, 400);
-  const groundMat = new THREE.MeshStandardMaterial({ color: COLOR_LANE });
+  const groundMat = new THREE.MeshStandardMaterial({ color: EDO_COLOR_LANE });
   const ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI/2;
   ground.position.z = -180;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // 左右の地面(装飾)
+  // 左右の地面(装飾、1つの共有マテリアルで両側を塗るのでステージ切替時は一括で色変更できる)
+  const sideGroundMat = new THREE.MeshStandardMaterial({ color: EDO_COLOR_GROUND });
   [-1,1].forEach(function(side){
-    const g = new THREE.Mesh(new THREE.PlaneGeometry(30, 400), new THREE.MeshStandardMaterial({color:COLOR_GROUND}));
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(30, 400), sideGroundMat);
     g.rotation.x = -Math.PI/2;
     g.position.set(side*(TOTAL_WIDTH/2 + 15), -0.01, -180);
     g.receiveShadow = true;
     scene.add(g);
   });
 
-  // レーンの区切り線(左右2本、土の道に合わせて白土色に)
+  // レーンの区切り線(左右2本、共有マテリアルでステージごとに色・発光を切り替える)
+  const laneDividerMat = new THREE.MeshStandardMaterial({color:0xd9cbb0, transparent:true, opacity:0.45});
   [-LANE_WIDTH/2, LANE_WIDTH/2].forEach(function(x){
-    const div = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.06, 400),
-      new THREE.MeshStandardMaterial({color:0xd9cbb0, transparent:true, opacity:0.45})
-    );
+    const div = new THREE.Mesh(new THREE.PlaneGeometry(0.06, 400), laneDividerMat);
     div.rotation.x = -Math.PI/2;
     div.position.set(x, 0.005, -180);
     scene.add(div);
   });
 
-  // 中央レーンの目印ライン(流れる感を出す、敷石風)
+  // レース場の縁石(赤白のカーブ風、ステージ2でのみ表示する)
+  const kerbGroup = new THREE.Group();
+  [-TOTAL_WIDTH/2 - 0.15, TOTAL_WIDTH/2 + 0.15].forEach(function(x){
+    for(let i=0;i<50;i++){
+      const kerb = new THREE.Mesh(
+        new THREE.BoxGeometry(0.3, 0.12, 3.6),
+        new THREE.MeshStandardMaterial({
+          color: i % 2 === 0 ? 0xff2050 : 0xf2f2f2,
+          emissive: i % 2 === 0 ? 0x660018 : 0x222222,
+          emissiveIntensity: 0.4
+        })
+      );
+      kerb.position.set(x, 0.06, -i*4);
+      kerbGroup.add(kerb);
+    }
+  });
+  kerbGroup.visible = false;
+  scene.add(kerbGroup);
+
+  // 中央レーンの目印ライン(流れる感を出す、共有マテリアルでステージごとに切り替える)
+  const lineMat = new THREE.MeshStandardMaterial({color:0xd9cbb0});
   const lineMarks = [];
   for(let i=0;i<20;i++){
-    const m = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.15, 1.2),
-      new THREE.MeshStandardMaterial({color:0xd9cbb0})
-    );
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(0.15, 1.2), lineMat);
     m.rotation.x = -Math.PI/2;
     m.position.set(0, 0.01, -i*8);
     scene.add(m);
     lineMarks.push(m);
   }
 
-  // ---------- 江戸の街並み(町家) ----------
-  function createMachiya(){
+  // ---------- ステージ1:江戸の街並み(町家) ----------
+  function createEdoMachiya(){
     const group = new THREE.Group();
     const w = 3.5 + Math.random()*1.5;
     const h = 4 + Math.random()*3;
@@ -243,7 +312,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     if (Math.random() < 0.6) {
       const lantern = new THREE.Mesh(
         new THREE.CylinderGeometry(0.18, 0.18, 0.42, 8),
-        new THREE.MeshStandardMaterial({ color: COLOR_LANTERN, emissive: 0x551100, emissiveIntensity: 0.5 })
+        new THREE.MeshStandardMaterial({ color: EDO_COLOR_LANTERN, emissive: 0x551100, emissiveIntensity: 0.5 })
       );
       lantern.position.set(w*0.28, h*0.72, d/2 + 0.15);
       group.add(lantern);
@@ -252,7 +321,64 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     return group;
   }
 
-  // 街道の両脇に町家を並べる(スクロールに合わせて手前へ流し、奥で再利用する)
+  // ---------- ステージ2:ネオン都市の高層ビル ----------
+  function createNeonSkyscraper(){
+    const group = new THREE.Group();
+    const w = 3.2 + Math.random()*1.8;
+    const h = 8 + Math.random()*14;
+    const d = 3.2;
+
+    // ビル本体(ダークな躯体)
+    const bodyMat = new THREE.MeshStandardMaterial({
+      color: Math.random() < 0.5 ? COLOR_WOOD_A : COLOR_WOOD_B,
+      roughness: 0.55,
+      metalness: 0.3
+    });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), bodyMat);
+    body.position.y = h/2;
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+
+    // 屋上の設備ブロック
+    const roofMat = new THREE.MeshStandardMaterial({ color: COLOR_ROOF, roughness: 0.7 });
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(w*0.5, 0.6, d*0.5), roofMat);
+    roof.position.y = h + 0.3;
+    roof.castShadow = true;
+    group.add(roof);
+
+    // 窓の発光ライン(横に何本か走らせる、ランダムな色)
+    const rowCount = Math.max(3, Math.floor(h/2));
+    for(let r=0;r<rowCount;r++){
+      if (Math.random() < 0.55) continue; // 一部だけ点灯させて雑多な都市感を出す
+      const winColor = NEON_ACCENTS[Math.floor(Math.random()*NEON_ACCENTS.length)];
+      const win = new THREE.Mesh(
+        new THREE.PlaneGeometry(w*0.9, 0.18),
+        new THREE.MeshStandardMaterial({ color: winColor, emissive: winColor, emissiveIntensity: 1.4 })
+      );
+      win.position.set(0, r*2 + 1, d/2 + 0.01);
+      group.add(win);
+      const winBack = win.clone();
+      winBack.rotation.y = Math.PI;
+      winBack.position.z = -d/2 - 0.01;
+      group.add(winBack);
+    }
+
+    // 縦のネオン看板(ビルの角に取り付ける、街灯代わり)
+    if (Math.random() < 0.7) {
+      const signColor = NEON_ACCENTS[Math.floor(Math.random()*NEON_ACCENTS.length)];
+      const sign = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, h*0.6, 0.25),
+        new THREE.MeshStandardMaterial({ color: signColor, emissive: signColor, emissiveIntensity: 1.6 })
+      );
+      sign.position.set(w*0.45, h*0.35, d/2 + 0.2);
+      group.add(sign);
+    }
+
+    return group;
+  }
+
+  // 走路の両脇に建物を並べる(スクロールに合わせて手前へ流し、奥で再利用する)
   // まずは標準の箱型モデルで配置しておき、Tripo3D等のGLBモデルが見つかれば後から差し替える。
   const buildings = [];
   const BUILDING_SPACING = 9;
@@ -260,7 +386,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
   const buildingSides = []; // 各建物がどちら側(-1:左 / 1:右)にあるか記録(向き調整用)
   for (let i=0; i<BUILDING_ROWS; i++){
     [-1, 1].forEach(function(side){
-      const b = createMachiya();
+      const b = createEdoMachiya();
       const xOff = TOTAL_WIDTH/2 + 3 + Math.random()*1.5;
       b.position.set(side*xOff, 0, -i*BUILDING_SPACING - 10);
       scene.add(b);
@@ -271,15 +397,24 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
   // ---------- Tripo3D等で作った街並み用GLBモデルの読み込み(任意) ----------
   // このHTMLと同じフォルダに指定名のGLBファイルを置くと、上の標準モデルと自動的に差し替わる。
-  // 見つからない場合はそのまま標準の町家・樽で遊べる(フォールバック)。
-  const SCENERY_MODEL_URLS = {
-    building: 'scenery-building.glb',  // 街道沿いに並べる建物モデル
-    obstacle: 'scenery-obstacle.glb'   // ジャンプで避ける障害物モデル
+  // 見つからない場合はそのまま標準の見た目(町家・ネオンビル)で遊べる(フォールバック)。
+  // ステージ1(江戸)用と、ステージ2(ネオン都市)用でファイル名を分けている。
+  const STAGE_SCENERY_URLS = {
+    edo: {
+      building: 'scenery-building.glb',        // 江戸パートで使う建物モデル
+      obstacle: 'scenery-obstacle.glb'          // 江戸パートで使う障害物モデル
+    },
+    neon: {
+      building: 'scenery-building-neon.glb',    // ネオン都市パートで使う建物モデル
+      obstacle: 'scenery-obstacle-neon.glb'      // ネオン都市パートで使う障害物モデル
+    }
   };
   const BUILDING_MODEL_SCALE = 5.5;  // 建物モデルの大きさ調整(このモデルは高さ1.0基準で作られているため5.5倍している)
   const OBSTACLE_MODEL_SCALE = 1.0;  // 障害物モデルの大きさ調整
 
   let obstacleTemplate = null; // 読み込めた場合、以後の障害物生成で使う雛形
+  let buildingLoadToken = 0;   // ステージ切替時に古い読み込み結果を無視するための世代番号
+  let obstacleLoadToken = 0;
 
   function loadSceneryModel(url, onSuccess){
     if (typeof GLTFLoader !== 'function' || !url) return;
@@ -297,27 +432,39 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     );
   }
 
-  // 建物モデルの差し替え
-  loadSceneryModel(SCENERY_MODEL_URLS.building, function(template){
-    buildings.forEach(function(oldGroup, idx){
-      const clone = template.clone(true);
-      clone.traverse(function(node){
-        if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+  // 建物モデルの読み込み・差し替え(ステージ切替のたびに呼び直す)
+  function loadBuildingModel(url){
+    const myToken = ++buildingLoadToken;
+    loadSceneryModel(url, function(template){
+      if (myToken !== buildingLoadToken) return; // 別ステージへ切り替わっていたら無視
+      buildings.forEach(function(oldGroup, idx){
+        const clone = template.clone(true);
+        clone.traverse(function(node){
+          if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+        });
+        clone.scale.setScalar(BUILDING_MODEL_SCALE);
+        clone.position.copy(oldGroup.position);
+        // 道に面するように、左側の建物は反転させる
+        clone.rotation.y = buildingSides[idx] < 0 ? Math.PI : 0;
+        scene.remove(oldGroup);
+        scene.add(clone);
+        buildings[idx] = clone;
       });
-      clone.scale.setScalar(BUILDING_MODEL_SCALE);
-      clone.position.copy(oldGroup.position);
-      // 道に面するように、左側の建物は反転させる
-      clone.rotation.y = buildingSides[idx] < 0 ? Math.PI : 0;
-      scene.remove(oldGroup);
-      scene.add(clone);
-      buildings[idx] = clone;
     });
-  });
+  }
 
-  // 障害物モデルの読み込み(以後spawnObstacleで使用)
-  loadSceneryModel(SCENERY_MODEL_URLS.obstacle, function(template){
-    obstacleTemplate = template;
-  });
+  // 障害物モデルの読み込み(以後spawnObstacleで使用、ステージ切替のたびに呼び直す)
+  function loadObstacleModel(url){
+    const myToken = ++obstacleLoadToken;
+    obstacleTemplate = null;
+    loadSceneryModel(url, function(template){
+      if (myToken !== obstacleLoadToken) return; // 別ステージへ切り替わっていたら無視
+      obstacleTemplate = template;
+    });
+  }
+
+  loadBuildingModel(STAGE_SCENERY_URLS.edo.building);
+  loadObstacleModel(STAGE_SCENERY_URLS.edo.obstacle);
 
   // ---------- プレイヤー ----------
   // player: レーン移動・ジャンプで動かす親グループ(位置の基準はここ)
@@ -391,10 +538,66 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     currentLane = next;
   }
 
-  // ---------- 障害物(木の樽) ----------
+  // ---------- 障害物(ステージ1:木の樽 / ステージ2:ネオンのエネルギーパイロン) ----------
   const obstacles = [];
-  const OBST_COLOR = 0x8a5a2b;      // 樽の木材色
-  const OBST_BAND_COLOR = 0x3d2b1a; // 樽のたが(帯)の色
+  const EDO_OBST_COLOR = 0x8a5a2b;      // 樽の木材色
+  const EDO_OBST_BAND_COLOR = 0x3d2b1a; // 樽のたが(帯)の色
+  const NEON_OBST_COLOR = 0x1a1230;     // パイロン本体色(ダークな金属)
+
+  function createEdoBarrel(height){
+    const radius = LANE_WIDTH*0.22;
+    const group = new THREE.Group();
+    const barrel = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius, radius*1.05, height, 14),
+      new THREE.MeshStandardMaterial({ color: EDO_OBST_COLOR, roughness:0.85 })
+    );
+    barrel.castShadow = true;
+    group.add(barrel);
+    [height*0.32, -height*0.32].forEach(function(y){
+      const band = new THREE.Mesh(
+        new THREE.CylinderGeometry(radius*1.06, radius*1.11, height*0.12, 14),
+        new THREE.MeshStandardMaterial({ color: EDO_OBST_BAND_COLOR, roughness:0.7 })
+      );
+      band.position.y = y;
+      group.add(band);
+    });
+    return group;
+  }
+
+  function createNeonPylon(height){
+    const radius = LANE_WIDTH*0.22;
+    const neonColor = NEON_ACCENTS[Math.floor(Math.random()*NEON_ACCENTS.length)];
+    const group = new THREE.Group();
+
+    const pylon = new THREE.Mesh(
+      new THREE.CylinderGeometry(radius*0.7, radius, height, 8),
+      new THREE.MeshStandardMaterial({ color: NEON_OBST_COLOR, roughness:0.4, metalness:0.6 })
+    );
+    pylon.castShadow = true;
+    group.add(pylon);
+
+    // 上下に発光するリング(ネオンの帯)
+    [height*0.32, -height*0.32].forEach(function(y){
+      const band = new THREE.Mesh(
+        new THREE.TorusGeometry(radius*1.05, 0.06, 8, 16),
+        new THREE.MeshStandardMaterial({ color: neonColor, emissive: neonColor, emissiveIntensity: 1.5 })
+      );
+      band.rotation.x = Math.PI/2;
+      band.position.y = y;
+      group.add(band);
+    });
+
+    // 頂上の発光コア
+    const core = new THREE.Mesh(
+      new THREE.SphereGeometry(radius*0.4, 12, 12),
+      new THREE.MeshStandardMaterial({ color: neonColor, emissive: neonColor, emissiveIntensity: 2.0 })
+    );
+    core.position.y = height*0.55;
+    group.add(core);
+
+    return group;
+  }
+
   function spawnObstacle(){
     const height = 0.9; // ジャンプで越えられる高さ
     const lane = Math.floor(Math.random() * LANE_COUNT);
@@ -409,27 +612,8 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
       group.scale.setScalar(OBSTACLE_MODEL_SCALE);
       group.position.set(lanePositions[lane], 0, -60 - Math.random()*10);
     } else {
-      // 標準の見た目(木の樽)
-      const radius = LANE_WIDTH*0.22;
-      group = new THREE.Group();
-
-      const barrel = new THREE.Mesh(
-        new THREE.CylinderGeometry(radius, radius*1.05, height, 14),
-        new THREE.MeshStandardMaterial({ color: OBST_COLOR, roughness:0.85 })
-      );
-      barrel.castShadow = true;
-      group.add(barrel);
-
-      // 上下の"たが"(帯)
-      [height*0.32, -height*0.32].forEach(function(y){
-        const band = new THREE.Mesh(
-          new THREE.CylinderGeometry(radius*1.06, radius*1.11, height*0.12, 14),
-          new THREE.MeshStandardMaterial({ color: OBST_BAND_COLOR, roughness:0.7 })
-        );
-        band.position.y = y;
-        group.add(band);
-      });
-
+      // 標準の見た目(現在のステージに合わせて樽 or ネオンパイロン)
+      group = (currentStage === 'neon') ? createNeonPylon(height) : createEdoBarrel(height);
       group.position.set(lanePositions[lane], height/2, -60 - Math.random()*10);
     }
 
@@ -438,11 +622,91 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     obstacles.push(group);
   }
 
+  // ---------- ステージ管理(800m走ったら江戸→ネオン都市に切り替える) ----------
+  let currentStage = 'edo';
+  const STAGE2_DISTANCE = 800; // このm数を超えたらステージ2(ネオン都市)へ
+
+  // 建物一式を、現在の位置(スクロール量)を保ったまま新しい見た目に差し替える
+  function regenerateBuildings(genFn){
+    for (let idx=0; idx<buildings.length; idx++){
+      const oldGroup = buildings[idx];
+      const b = genFn();
+      b.position.copy(oldGroup.position);
+      scene.remove(oldGroup);
+      scene.add(b);
+      buildings[idx] = b;
+    }
+  }
+
+  function applyEdoTheme(){
+    scene.background = edoSkyTexture;
+    scene.fog.color.setHex(0x8a6a58); scene.fog.near = 20; scene.fog.far = 75;
+    groundMat.color.setHex(EDO_COLOR_LANE);
+    sideGroundMat.color.setHex(EDO_COLOR_GROUND);
+    laneDividerMat.color.setHex(0xd9cbb0);
+    laneDividerMat.emissive.setHex(0x000000);
+    laneDividerMat.emissiveIntensity = 0;
+    laneDividerMat.opacity = 0.45;
+    lineMat.color.setHex(0xd9cbb0);
+    lineMat.emissive.setHex(0x000000);
+    lineMat.emissiveIntensity = 0;
+    kerbGroup.visible = false;
+    hemi.color.setHex(0xffd9a0); hemi.groundColor.setHex(0x3b2b20); hemi.intensity = 0.95;
+    sun.color.setHex(0xffb066); sun.intensity = 1.05;
+    neonFill.intensity = 0;
+    COLOR_WOOD_A = EDO_COLOR_WOOD_A;
+    COLOR_WOOD_B = EDO_COLOR_WOOD_B;
+    COLOR_ROOF = EDO_COLOR_ROOF;
+    regenerateBuildings(createEdoMachiya);
+    loadBuildingModel(STAGE_SCENERY_URLS.edo.building);
+    loadObstacleModel(STAGE_SCENERY_URLS.edo.obstacle);
+  }
+
+  function applyNeonTheme(){
+    scene.background = neonSkyTexture;
+    scene.fog.color.setHex(0x1a0838); scene.fog.near = 20; scene.fog.far = 78;
+    groundMat.color.setHex(NEON_COLOR_LANE);
+    sideGroundMat.color.setHex(NEON_COLOR_GROUND);
+    laneDividerMat.color.setHex(0x00e5ff);
+    laneDividerMat.emissive.setHex(0x00e5ff);
+    laneDividerMat.emissiveIntensity = 0.9;
+    laneDividerMat.opacity = 0.75;
+    lineMat.color.setHex(0x00e5ff);
+    lineMat.emissive.setHex(0x00e5ff);
+    lineMat.emissiveIntensity = 0.8;
+    kerbGroup.visible = true;
+    hemi.color.setHex(0x8a6bff); hemi.groundColor.setHex(0x120620); hemi.intensity = 0.85;
+    sun.color.setHex(0x66d9ff); sun.intensity = 0.55;
+    neonFill.intensity = 0.8;
+    COLOR_WOOD_A = NEON_COLOR_WOOD_A;
+    COLOR_WOOD_B = NEON_COLOR_WOOD_B;
+    COLOR_ROOF = NEON_COLOR_ROOF;
+    regenerateBuildings(createNeonSkyscraper);
+    loadBuildingModel(STAGE_SCENERY_URLS.neon.building);
+    loadObstacleModel(STAGE_SCENERY_URLS.neon.obstacle);
+  }
+
+  function switchStage(stageName){
+    currentStage = stageName;
+    if (stageName === 'neon') applyNeonTheme(); else applyEdoTheme();
+  }
+
+  // 画面中央に「ステージ2」等のメッセージを一時的に表示する
+  const stageMsgEl = document.getElementById('stageMsg');
+  let stageMsgTimer = null;
+  function showStageMessage(text){
+    stageMsgEl.textContent = text;
+    stageMsgEl.classList.add('show');
+    if (stageMsgTimer) clearTimeout(stageMsgTimer);
+    stageMsgTimer = setTimeout(function(){ stageMsgEl.classList.remove('show'); }, 2600);
+  }
+
   // ---------- 状態管理 ----------
   let running = false;
   let speed = 0.28;
   const SPEED_INC = 0.0006;
   let distance = 0;
+  let stage2Triggered = false;
   let best = 0;
   try { best = parseFloat(localStorage.getItem('jumpRunnerBest') || '0'); } catch(e){}
   document.getElementById('best').textContent = 'ベスト: ' + Math.floor(best) + ' m';
@@ -461,6 +725,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     speed = 0.28;
     spawnTimer = 0;
     spawnInterval = 70;
+    stage2Triggered = false;
+    stageMsgEl.classList.remove('show');
+    if (currentStage !== 'edo') switchStage('edo');
     currentLane = 1;
     player.position.set(lanePositions[currentLane], GROUND_Y, 0);
     velY = 0;
@@ -566,6 +833,13 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
       distance += speed * 0.6;
       speed += SPEED_INC;
       scoreEl.textContent = Math.floor(distance) + ' m';
+
+      // 800m走ったらステージ2(ネオン都市)へ切り替え
+      if(!stage2Triggered && distance >= STAGE2_DISTANCE){
+        stage2Triggered = true;
+        switchStage('neon');
+        showStageMessage('ステージ2 : ネオン都市');
+      }
 
       // ジャンプ物理
       velY += GRAVITY;
